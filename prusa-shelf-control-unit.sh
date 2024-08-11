@@ -1,7 +1,7 @@
 #! /bin/sh
 
 ### BEIN INIT INFO
-# Provides:		listen-for-shutdown.py
+# Provides:		prusa-shelf-control-unit.py
 # Required-Start:	$remote_fs $syslog
 # Required-Stop:	$remote_fs $syslog
 # Default-Start:	2 3 4 5
@@ -13,15 +13,15 @@
 # Carry out specific functions when asked to by the system
 case "$1" in
 	start)
-		echo "Starting listen-for-shutdown.py"
-		/usr/local/bin/listen-for-shutdown.py &
+		echo "Starting prusa-shelf-control-unit.py"
+		/usr/local/bin/prusa-shelf-control-unit.py &
 		;;
 	stop)
-		echo "Stopping listen-for-shutdown.py"
-		pkill -f /usr/local/bin/listen-for-shutdown.py
+		echo "Stopping prusa-shelf-control-unit.py"
+		pkill -f /usr/local/bin/prusa-shelf-control-unit.py
 		;;
 	*)
-		echo "Usage: /etc/init.d/listen-for-shutdown.sh {start|stop}"
+		echo "Usage: /etc/init.d/prusa-shelf-control-unit.sh {start|stop}"
 		exit 1
 		;;
 esac
