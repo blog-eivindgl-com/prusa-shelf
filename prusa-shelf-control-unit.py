@@ -1,9 +1,20 @@
 #!/usr/bin/env python
 
 #import RPi.GPIO as GPIO
-import time, datetime, os, subprocess
-from gpiozero import Button, MotionSensor, LED
+import time, datetime, os, subprocess, logging
+from gpiozero.pins.pigpio import PiGPIOFactory
+from gpiozero import Button, MotionSensor, LED, Servo
 from signal import pause
+
+logging.basicConfig(filename="prusa-shelf-control-unit.log", format="%(asctime)s - %(levelname)s - %(message)s", level=logging.DEBUG)
+
+try:
+  f = PiGPIOFactory()
+  global printer_power_servo 
+  printer_power_servo = Servo(6, pin_factory=f)
+  logging.info("Changed to PiGPIOFactory for servo")
+except Exception as Argument:
+  logging.error("Unable to change to PiGPIOFactory for servo")
 
 #GPIO.setmode(GPIO.BCM)
 #GPIO.setup(3, GPIO.IN, pull_up_down=GPIO.PUD_UP)
@@ -12,12 +23,14 @@ from signal import pause
 # Define LED lights GPIO
 printer_light_led = LED(23)
 printer_cam_led = LED(22)
+printer_cam_indicator_led = LED(10)
 printer_filter_led = LED(27)
 room_exhaust_fan_led = LED(17)
 power_off_led = LED(4)
 
 # Define buttons GPIO
 pi_power_button = Button(3, hold_time=3)
+printer_power_button = Button(5, hold_time=3)
 printer_light_button = Button(21)
 printer_cam_button = Button(20)
 printer_filter_button = Button(16)
@@ -31,72 +44,105 @@ printer_filter_switch = LED(13)
 
 # Raspberry Pi power button
 def shutdown():
+  logging.debug("Shutdown triggered")
   power_off_led.on()
   #subprocess.call(['shutdown', '-h', 'now'], shell=True)
   os.system("sudo shutdown -h now")
+  logging.info("Shutdown")
 pi_power_button.when_held = shutdown
+
+# Printer power button
+def printer_power_off():
+  global printer_power_servo
+  logging.debug("Switch printer off triggered")
+  if printer_power_servo:
+    printer_power_servo.max()
+    logging.info("Printer turned off")
+  else:
+    logging.warning("Printer power servo is not active")
+printer_power_button.when_held = printer_power_off
+def printer_power_on():
+  global printer_power_servo
+  logging.debug("Switch printer on triggered")
+  if printer_power_servo:
+    printer_power_servo.mid()
+    logging.info("Printer turned on")
+  else:
+    logging.warning("Printer power servo is not active")
+printer_power_button.when_pressed = printer_power_on
 
 # Printer light for camera
 def switch_printer_light():
+  logging.debug("Switch printer light triggered")
   if printer_light_led.is_lit:
     printer_light_switch.off()
     printer_light_led.off()
+    logging.info("Printer light turned off")
   else:
     printer_light_switch.on()
     printer_light_led.on()
+    logging.info("Printer light turned on")
 printer_light_button.when_pressed = switch_printer_light
 
 # Printer camera snapshots
 def switch_printer_cam():
+  global printer_cam_led_toggled_at
+  logging.debug("Switch printer cam triggered")
   if printer_cam_led.is_lit:
-    os.system("pkill -f /usr/local/bin/send-snapshot-to-prusaconnect.sh")
+    os.system("sudo pkill -f /etc/init.d/send-snapshot-to-prusaconnect.sh &")
     printer_cam_led.off()
+    printer_cam_indicator_led.off()  # Toggled by bash script, but make sure it is turned off after killing the script
+    logging.info("Printer cam turned off")
   else:
-    os.system("/usr/local/bin/send-snapshot-to-prusaconnect.sh")
+    printer_cam_led_toggled_at = time.time()
+    os.system("sudo /etc/init.d/send-snapshot-to-prusaconnect.sh &")
     printer_cam_led.on()
+    logging.info("Printer cam turned on")
 printer_cam_button.when_pressed = switch_printer_cam
-# Initialize a time variable to use when blinking LED for an active camera
-printer_cam_stopped_at = time.time()
+# Initialize a time variable to watch status of printer cam
 printer_cam_led_toggled_at = time.time()
 
 # Prusa Enclosure Advanced Filtering System
 def switch_printer_filter():
+  logging.debug("Switch printer filter triggered")
   if printer_filter_led.is_lit:
     printer_filter_switch.off()
     printer_filter_led.off()
+    logging.info("Printer filter turned off")
   else:
     printer_filter_switch.on()
     printer_filter_led.on()
+    logging.info("Printer filter turned on")
 printer_filter_button.when_pressed = switch_printer_filter
 
 # Room exhaust fan
 def switch_room_exhaust_fan():
+  logging.debug("Switch room exhaust fan triggered")
   if room_exhaust_fan_led.is_lit:
     # TODO: Decide how to turn fan on and off
     room_exhaust_fan_led.off()
+    logging.info("Room exhaust fan turned off")
   else:
     # TODO: Decide how to turn fan on and off
     room_exhaust_fan_led.on()
+    logging.info("Room exhaust fan turned on")
 room_exhaust_fan_button.when_pressed = switch_room_exhaust_fan
 
 def test_camera_snapshot_status():
+  global printer_cam_led_toggled_at
   try:
-    # Blink printer cam LED if camera is running
     cam_image_file_age_in_seconds = time.time() - os.stat("/home/gidverksted/Pictures/upload.jpg").st_mtime
-    cam_stopped_age_in_seconds = time.time() - printer_cam_stopped_at
-    # TODO: Can't remember the purpose of this
-    cam_led_toggle_age = time.time() - printer_cam_led_toggled_at
     
-    if cam_image_file_age_in_seconds < 10 and cam_stopped_age_in_seconds > 10:
-      printer_cam_led.toggle()
-      printer_cam_led_toggled_at = time.time()
-    else:
-      # Turn cam led off to indicate camera service not running
-      printer_cam_led.off()
-  except:
-    print("unable to detect camera status")
+    if time.time() - printer_cam_led_toggled_at < 10:
+      return
+    
+    if printer_cam_led.is_lit and cam_image_file_age_in_seconds > 10:
+      logging.warning("Printer cam is not running")
+  except Exception as Argument:
+    logging.exception("Unable to detect camera status")
 
 def keep_room_led_strips_on_while_someone_present():
+  global led_turned_on_at
   try:
     if room_led_strips_switch.is_lit:
       led_on_duration = datetime.datetime.now() - led_turned_on_at
@@ -111,8 +157,8 @@ def keep_room_led_strips_on_while_someone_present():
         # Turn on LED strip
         room_led_strips_switch.on()
         led_turned_on_at = datetime.datetime.now()
-  except:
-    print("unable to control room led strips")
+  except Exception as Argument:
+    logging.exception("Unable to control room led strips")
 
 while True:
   keep_room_led_strips_on_while_someone_present()
