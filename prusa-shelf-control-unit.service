@@ -1,0 +1,10 @@
+[Unit]
+Description=Prusa Shelf Control Unit Service
+After=multi-user.target
+
+[Service]
+Type=idle
+ExecStart=/home/gidverksted/env/bin/python3 /usr/local/bin/prusa-shelf-control-unit.py > /var/log/prusa-shelf-control-unit.log 2>&1
+
+[Install]
+WantedBy=multi-user.target
