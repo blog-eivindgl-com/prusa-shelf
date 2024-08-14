@@ -1,12 +1,12 @@
 #!/usr/bin/env python
 
-#import RPi.GPIO as GPIO
 import time, datetime, os, subprocess, logging
 from gpiozero.pins.pigpio import PiGPIOFactory
 from gpiozero import Button, MotionSensor, LED, Servo
 from signal import pause
 
-logging.basicConfig(filename="prusa-shelf-control-unit.log", format="%(asctime)s - %(levelname)s - %(message)s", level=logging.DEBUG)
+logging.basicConfig(filename="/var/log/prusa-shelf-control-unit.log", format="%(asctime)s - %(levelname)s - %(message)s", level=logging.INFO)
+logging.info("Prusa Shelf Control Unit started")
 
 try:
   f = PiGPIOFactory()
@@ -16,14 +16,13 @@ try:
 except Exception as Argument:
   logging.error("Unable to change to PiGPIOFactory for servo")
 
-#GPIO.setmode(GPIO.BCM)
-#GPIO.setup(3, GPIO.IN, pull_up_down=GPIO.PUD_UP)
-#GPIO.wait_for_edge(3, GPIO.FALLING)
+# Variables to log some statuses once in a while
+printer_cam_error_status_logged_at = datetime.datetime.now()
+last_led_on_duration_logged_at = datetime.datetime.now()
 
 # Define LED lights GPIO
 printer_light_led = LED(23)
 printer_cam_led = LED(22)
-printer_cam_indicator_led = LED(10)
 printer_filter_led = LED(27)
 room_exhaust_fan_led = LED(17)
 power_off_led = LED(4)
@@ -35,7 +34,7 @@ printer_light_button = Button(21)
 printer_cam_button = Button(20)
 printer_filter_button = Button(16)
 room_exhaust_fan_button = Button(12)
-room_motion_sensor = MotionSensor(18)
+room_motion_sensor = MotionSensor(18, threshold=.99)
 
 # Define switches GPIO
 room_led_strips_switch = LED(26)
@@ -91,7 +90,6 @@ def switch_printer_cam():
   if printer_cam_led.is_lit:
     os.system("sudo pkill -f /etc/init.d/send-snapshot-to-prusaconnect.sh &")
     printer_cam_led.off()
-    printer_cam_indicator_led.off()  # Toggled by bash script, but make sure it is turned off after killing the script
     logging.info("Printer cam turned off")
   else:
     printer_cam_led_toggled_at = time.time()
@@ -130,32 +128,45 @@ room_exhaust_fan_button.when_pressed = switch_room_exhaust_fan
 
 def test_camera_snapshot_status():
   global printer_cam_led_toggled_at
+  global printer_cam_error_status_logged_at
   try:
     cam_image_file_age_in_seconds = time.time() - os.stat("/home/gidverksted/Pictures/upload.jpg").st_mtime
     
     if time.time() - printer_cam_led_toggled_at < 10:
       return
-    
-    if printer_cam_led.is_lit and cam_image_file_age_in_seconds > 10:
+
+    if printer_cam_led.is_lit and cam_image_file_age_in_seconds > 10 and (datetime.datetime.now() - printer_cam_error_status_logged_at).total_seconds() > 60:
       logging.warning("Printer cam is not running")
+      printer_cam_error_status_logged_at = datetime.datetime.now()
   except Exception as Argument:
     logging.exception("Unable to detect camera status")
 
 def keep_room_led_strips_on_while_someone_present():
   global led_turned_on_at
+  global last_motion_detected_at
+  global last_led_on_duration_logged_at
   try:
     if room_led_strips_switch.is_lit:
       led_on_duration = datetime.datetime.now() - led_turned_on_at
-      # "LED strip has been on for %s seconds"%led_on_duration.total_seconds()
+
+      if (datetime.datetime.now() - last_led_on_duration_logged_at).total_seconds() > 60:
+        logging.info("Room led strips has been on for %s seconds"%led_on_duration.total_seconds())
+        logging.info("Last motion detected at %s"%last_motion_detected_at)
+        last_led_on_duration_logged_at = datetime.datetime.now()
+      
       if room_motion_sensor.motion_detected:
         last_motion_detected_at = datetime.datetime.now()
+      
       if led_on_duration.total_seconds() > 90 and (datetime.datetime.now() - last_motion_detected_at).total_seconds() > 60:
         # No motion detected the last 60s. Turn off LED
+        logging.debug("Switch room led strips triggered")
         room_led_strips_switch.off()
-    else:
-        room_motion_sensor.wait_for_motion()
+        logging.info("Room led strips turned off")
+    elif room_motion_sensor.motion_detected:
         # Turn on LED strip
+        logging.debug("Switch room led strips triggered")
         room_led_strips_switch.on()
+        logging.info("Room led strips turned on")
         led_turned_on_at = datetime.datetime.now()
   except Exception as Argument:
     logging.exception("Unable to control room led strips")

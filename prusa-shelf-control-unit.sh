@@ -14,7 +14,7 @@
 case "$1" in
 	start)
 		echo "Starting prusa-shelf-control-unit.py"
-		/usr/local/bin/prusa-shelf-control-unit.py &
+		/home/gidverksted/env/bin/python3 /usr/local/bin/prusa-shelf-control-unit.py &
 		;;
 	stop)
 		echo "Stopping prusa-shelf-control-unit.py"
