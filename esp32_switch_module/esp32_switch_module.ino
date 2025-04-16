@@ -71,12 +71,19 @@ void changeSwitch(const char *type) {
   }
 
   if (pinIndex >= 0) {
-      switchStates[pinIndex] = !switchStates[pinIndex];
+    switchStates[pinIndex] = !switchStates[pinIndex];
+    char mqttMessage[50];
 
     if (switchStates[pinIndex]) {
       digitalWrite(switchPins[pinIndex], HIGH);
+      snprintf(mqttMessage, sizeof(mqttMessage), "%s: on", type);
+      mqttClient.publish("prusashelf/switchStateChanged", mqttMessage);
+      Serial.printf("Published %s to topic prusashelf/switchStateChanged\n", mqttMessage);
     } else {
       digitalWrite(switchPins[pinIndex], LOW);
+      snprintf(mqttMessage, sizeof(mqttMessage), "%s: off", type);
+      mqttClient.publish("prusashelf/switchStateChanged", mqttMessage);
+      Serial.printf("Published %s to topic prusashelf/switchStateChanged\n", mqttMessage);
     }
   }
 }

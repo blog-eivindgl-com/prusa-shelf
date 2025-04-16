@@ -52,7 +52,6 @@ void checkButtonsHeld() {
     } else if (millis() - buttonPrinterPressStartTime >= 3000) {
       Serial.println("Printer power button is held for more than 3 seconds!");
       isButtonPrinterPressed = false;
-      ledStates[0] = !ledStates[0];
       mqttClient.publish("prusashelf/buttonPressed", "printer");
       Serial.println("Published printer to topic prusashelf/buttonPressed");
     }
@@ -93,25 +92,48 @@ void checkButtonStates() {
   }
 }
 
-void switchLedForButton(int buttonIndex) {
-  int ledIndex;
+void setLedState(const char *switchState) {
+  int ledIndex = -1;
 
-  switch (buttonIndex) {
-    case 0:
-      ledIndex = 1;
-      break;
-    case 1:
-      ledIndex = 2;
-      break;
-    case 2:
-      ledIndex = 4;
-      break;
-    case 3:
-      ledIndex = 5;
-      break;
+  // Expect switchState to contain values like "<switch>: on/off"
+  const char *delimiter = strchr(switchState, ':');
+
+  if (delimiter == nullptr) {
+    Serial.println("Invalid structure of message. Expected <switch>: on/off");
+    return;
   }
 
-  ledStates[ledIndex] = !ledStates[ledIndex];
+  // Extract the part before the colon which is the name of the switch
+  int keyLength = delimiter - switchState;
+  char switchName[keyLength + 1];
+  strncpy(switchName, switchState, keyLength);
+  switchName[keyLength] = '\0';  // Null-terminate the string
+
+  // Extract the part after the colon, which is the on/off state of the switch
+  const char *stateValue = delimiter + 1;
+  while (*stateValue == ' ') stateValue++; // Skip spaces
+
+  if (strcmp(switchName, "printer") == 0) {
+    ledIndex = 0;
+  } else if (strcmp(switchName, "enclosureLight") == 0) {
+    ledIndex = 1;
+  } else if (strcmp(switchName, "camera") == 0) {
+    ledIndex = 2;
+  } else if (strcmp(switchName, "enclosureFan") == 0) {
+    ledIndex = 4; // 3 is yellow led to indicate running camera
+  } else {
+    Serial.printf("Invalid switch %s\n", switchName);
+  }
+
+  if (strcmp(stateValue, "on") == 0) {
+    Serial.printf("%s is turned ON\n", switchName);
+    ledStates[ledIndex] = true;
+  } else if (strcmp(stateValue, "off") == 0) {
+    Serial.printf("%s is turned OFF\n", switchName);
+    ledStates[ledIndex] = false;
+  } else {
+    Serial.printf("Invalid state for %s: %s\n", switchName, stateValue);
+  }
 }
 
 void updateLeds() {
@@ -129,11 +151,30 @@ void IRAM_ATTR handleButtonInterrupt() {
     if (buttonStates[i] == false && digitalRead(buttonPins[i]) == LOW) {
       buttonStates[i] = true;
       buttonStateChanged[i] = true;
-      switchLedForButton(i);
     } else if (buttonStates[i] == true && digitalRead(buttonPins[i]) == HIGH) {
       buttonStates[i] = false;
       buttonStateChanged[i] = true;
     }
+  }
+}
+
+void incomingMqttMessage(char *topic, uint8_t *message, unsigned int length) {
+  Serial.print("Message received on topic: ");
+  Serial.println(topic);
+
+  Serial.print("Message: ");
+
+  String value = "";
+
+  for (int i = 0; i < length; i++) {
+    Serial.print((char)message[i]);
+    value += (char)message[i];
+  }
+
+  Serial.println();
+
+  if (strcmp(topic, "prusashelf/switchStateChanged") == 0) {
+    setLedState(value.c_str());
   }
 }
 
@@ -148,6 +189,16 @@ void reconnectMqttBroker() {
       Serial.println(mqttClient.state());
       delay(2000);
     }
+  }
+
+  subscribeToMqttTopics();
+}
+
+void subscribeToMqttTopics() {
+  if (mqttClient.subscribe("prusashelf/switchStateChanged")) {
+    Serial.println("Subscribed to topic: prusashelf/switchStateChanged");
+  } else {
+    Serial.println("Failed to subscribe to topic!");
   }
 }
 
@@ -206,6 +257,7 @@ void setup() {
 
   // Connect to MQTT broker
   mqttClient.setServer(mqttServer, 1883);
+  mqttClient.setCallback(incomingMqttMessage);
 
   if (!mqttClient.connected()) {
     reconnectMqttBroker();
@@ -216,6 +268,8 @@ void loop() {
   if (!mqttClient.connected()) {
     reconnectMqttBroker();
   }
+
+  mqttClient.loop(); // Process incoming MQTT messages
 
   checkButtonsHeld();
   checkButtonStates();
