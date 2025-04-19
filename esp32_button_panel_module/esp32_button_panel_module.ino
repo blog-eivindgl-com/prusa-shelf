@@ -22,9 +22,9 @@ volatile bool buttonStateChanged[numButtons] = { false };
 const int cameraRunningLedIndex = 3;
 const int ledPins[] = { 12, // printer
                         14, // enclosure light
-                        27, // camera on/off
-                        26, // camera running indicator
-                        25, // enclosure fan
+                        26, // camera on/off
+                        25, // camera running indicator
+                        27, // enclosure fan
                         33  // free space
                         };
 const int numLeds = sizeof(ledPins) / sizeof(ledPins[0]);
