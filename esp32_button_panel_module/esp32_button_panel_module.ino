@@ -19,12 +19,13 @@ const int numButtons = sizeof(buttonPins) / sizeof(buttonPins[0]);
 volatile bool buttonStates[numButtons] = { false };
 volatile bool buttonStateChanged[numButtons] = { false };
 
-const int ledPins[] = { 13, // printer
-                        12, // enclosure light
-                        14, // camera on/off
-                        27, // camera running indicator
-                        26, // enclosure fan
-                        25  // free space
+const int cameraRunningLedIndex = 3;
+const int ledPins[] = { 12, // printer
+                        14, // enclosure light
+                        27, // camera on/off
+                        26, // camera running indicator
+                        25, // enclosure fan
+                        33  // free space
                         };
 const int numLeds = sizeof(ledPins) / sizeof(ledPins[0]);
 volatile bool ledStates[numLeds] = { false };
@@ -154,7 +155,7 @@ void setLedState(const char *switchState) {
       Serial.printf("%s is turned ON\n", switchName);
       ledStates[ledIndex] = true;
       
-      if (ledIndex == 3) {
+      if (ledIndex == cameraRunningLedIndex) {
         cameraRunningLedOnTime = millis();  // time when camera running indicator was turned on
       }
     } else if (strcmp(stateValue, "off") == 0) {
@@ -356,7 +357,7 @@ void loop() {
   // If this device is updating based on other devices status, wait until it has received those messages and updated buttonStates array
   if (isQueryingOtherDevicesStatus) {
     delay(5000);
-    isQueryingOtherDevicesStatus= false;
+    isQueryingOtherDevicesStatus = false;
   }
 
   checkButtonsHeld();
@@ -364,7 +365,7 @@ void loop() {
   updateLeds();
 
   // Turn off camera running indicator after about 1s
-  if (ledStates[3] && millis() - cameraRunningLedOnTime >= 1000) {
+  if (ledStates[cameraRunningLedIndex] && millis() - cameraRunningLedOnTime >= 1000) {
     setLedState("cameraRunning: off");
   }
 
