@@ -14,11 +14,11 @@
 case "$1" in
 	start)
 		echo "Starting prusa-shelf-control-unit.py"
-		/home/gidverksted/env/bin/python3 /usr/local/bin/prusa-shelf-control-unit.py &
+		/home/gidverksted/prusashelf/bin/python3.11 /home/gidverksted/prusa-shelf-control-unit.py &
 		;;
 	stop)
 		echo "Stopping prusa-shelf-control-unit.py"
-		pkill -f /usr/local/bin/prusa-shelf-control-unit.py
+		pkill -f /home/gidverksted/prusa-shelf-control-unit.py
 		;;
 	*)
 		echo "Usage: /etc/init.d/prusa-shelf-control-unit.sh {start|stop}"

@@ -5,6 +5,7 @@
 
 # Secrets
 parameters.h
+parameters.py
 
 # User-specific files
 *.rsuser
