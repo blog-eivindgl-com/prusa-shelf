@@ -4,16 +4,16 @@
 #include "esp_sntp.h"
 #include "parameters.h"
 
-const int buttonPrinterPin = 15;
+const int buttonPrinterPin = 16;
 volatile bool isButtonPrinterPressed = false;
 unsigned long buttonPrinterPressStartTime = 0;
 unsigned long cameraRunningLedOnTime = 0;
 volatile bool isQueryingOtherDevicesStatus = false;
-const int buttonPins[] = { 15, // printer
-                            2, // enclosure light
-                            4, // camera
-                           16, // enclosure fan
-                           17  // free space
+const int buttonPins[] = { 16, // printer
+                           17, // enclosure light
+                            5, // camera
+                           18, // enclosure fan
+                           19  // free space
                            };
 const int numButtons = sizeof(buttonPins) / sizeof(buttonPins[0]);
 volatile bool buttonStates[numButtons] = { false };
