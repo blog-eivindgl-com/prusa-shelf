@@ -4,7 +4,11 @@
 #include "esp_sntp.h"
 #include "parameters.h"
 
-const int switchPins[] = { 15, 2, 4, 16};
+const int switchPins[] = { 15, // printer
+                            2, // enclosure light
+                            4, // enclosure fan
+                            16 // room light
+                            };
 const int numSwitches = sizeof(switchPins) / sizeof(switchPins[0]);
 volatile bool switchStates[numSwitches] = { false };
 
@@ -26,27 +30,6 @@ void timeavailable(struct timeval *t) {
   printLocalTime();
 }
 
-void switchForButton(int buttonIndex) {
-  int switchIndex;
-
-  switch (buttonIndex) {
-    case 0:
-      switchIndex = 1;
-      break;
-    case 1:
-      switchIndex = 2;
-      break;
-    case 2:
-      switchIndex = 4;
-      break;
-    case 3:
-      switchIndex = 5;
-      break;
-  }
-
-  switchStates[switchIndex] = !switchStates[switchIndex];
-}
-
 void updateSwitches() {
   for (int i = 0; i < numSwitches; i++) {
     if (switchStates[i]) {
@@ -57,17 +40,25 @@ void updateSwitches() {
   }
 }
 
+const char* getSwitchType(int index) {
+  switch(index) {
+    case 0: return "printer";
+    case 1: return "enclosureLight";
+    case 2: return "enclosureFan";
+    case 3: return "roomLight";
+    default: return "unknown";
+  }
+}
+
 void changeSwitch(const char *type) {
   int pinIndex = -1;
 
-  if (strcmp(type, "printer") == 0) {
-    pinIndex = 0;
-  } else if (strcmp(type, "enclosureLight") == 0) {
-    pinIndex = 1;
-  } else if (strcmp(type, "camera") == 0) {
-    pinIndex = 2;
-  } else if (strcmp(type, "enclosureFan") == 0) {
-    pinIndex = 3;
+  // Find which switch in the array corresponds to the type
+  for (int index = 0; index < numSwitches; index++) {
+    if (strcmp(type, getSwitchType(index)) == 0) {
+      pinIndex = index;
+      break;
+    }
   }
 
   if (pinIndex >= 0) {
@@ -85,6 +76,26 @@ void changeSwitch(const char *type) {
       mqttClient.publish("prusashelf/switchStateChanged", mqttMessage);
       Serial.printf("Published %s to topic prusashelf/switchStateChanged\n", mqttMessage);
     }
+  } else {
+    Serial.printf("Invalid switch type %s\n", type);
+  }
+}
+
+void reportDeviceStatus() {
+  Serial.println("Reporting device status as MQTT messages. The next switchStateChanged message will not be real changes, just an update of the current status.");
+
+  for (int i = 0; i < numSwitches; i++) {
+    char mqttMessage[50];
+    const char* type = getSwitchType(i);
+    
+    if (switchStates[i]) {
+      snprintf(mqttMessage, sizeof(mqttMessage), "%s: on", type);
+    } else {
+      snprintf(mqttMessage, sizeof(mqttMessage), "%s: off", type);
+    }
+    
+    mqttClient.publish("prusashelf/switchStateChanged", mqttMessage);
+    Serial.printf("Published %s to topic prusashelf/switchStateChanged\n", mqttMessage);
   }
 }
 
@@ -105,6 +116,8 @@ void incomingMqttMessage(char *topic, uint8_t *message, unsigned int length) {
 
   if (strcmp(topic, "prusashelf/buttonPressed") == 0) {
     changeSwitch(value.c_str());
+  } else if (strcmp(topic, "prusashelf/queryDeviceStatus") == 0) {
+    reportDeviceStatus();
   }
 }
 
@@ -129,6 +142,12 @@ void subscribeToMqttTopics() {
     Serial.println("Subscribed to topic: prusashelf/buttonPressed");
   } else {
     Serial.println("Failed to subscribe to topic!");
+  }
+
+  if (mqttClient.subscribe("prusashelf/queryDeviceStatus")) {
+    Serial.println("Subscribed to topic: prusashelf/queryDeviceStatus");
+  } else {
+    Serial.println("Failed to subscribe to topipc!");
   }
 }
 

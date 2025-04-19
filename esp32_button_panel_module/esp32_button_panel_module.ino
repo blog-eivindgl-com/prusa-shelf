@@ -7,25 +7,53 @@
 const int buttonPrinterPin = 15;
 volatile bool isButtonPrinterPressed = false;
 unsigned long buttonPrinterPressStartTime = 0;
-
-/*
-const int buttonEnclosureLightPin = 2;
-const int buttonCameraPin = 4;
-const int buttonEnclosureFanPin = 16;
-const int buttonFreePin = 17;
-*/
-
-const int buttonPins[] = { 2, 4, 16, 17 };
+unsigned long cameraRunningLedOnTime = 0;
+volatile bool isQueryingOtherDevicesStatus = false;
+const int buttonPins[] = { 15, // printer
+                            2, // enclosure light
+                            4, // camera
+                           16, // enclosure fan
+                           17  // free space
+                           };
 const int numButtons = sizeof(buttonPins) / sizeof(buttonPins[0]);
 volatile bool buttonStates[numButtons] = { false };
 volatile bool buttonStateChanged[numButtons] = { false };
 
-const int ledPins[] = { 13, 12, 14, 27, 26, 25 };
+const int ledPins[] = { 13, // printer
+                        12, // enclosure light
+                        14, // camera on/off
+                        27, // camera running indicator
+                        26, // enclosure fan
+                        25  // free space
+                        };
 const int numLeds = sizeof(ledPins) / sizeof(ledPins[0]);
 volatile bool ledStates[numLeds] = { false };
 
 WiFiClient wifiClient;
 PubSubClient mqttClient(wifiClient);  // MQTT
+
+const char* getButtonType(int index) {
+  switch (index) {
+    case 0: return "printer";
+    case 1: return "enclosureLight";
+    case 2: return "camera";
+    case 3: return "enclosureFan";
+    case 4: return "unknown";
+    default: return "unknown";
+  }
+}
+
+const char* getLedType(int index) {
+  switch (index) {
+    case 0: return "printer";
+    case 1: return "enclosureLight";
+    case 2: return "camera";
+    case 3: return "cameraRunning";
+    case 4: return "enclosureFan";
+    case 5: return "unknown";
+    default: return "unkonwn";
+  }
+}
 
 void printLocalTime() {
   struct tm timeinfo;
@@ -67,21 +95,9 @@ void checkButtonStates() {
 
       if (buttonStates[i]) {
         Serial.printf("Button %d was pressed!\n", buttonPins[i]);
-        char* value = "";
+        const char* value = getButtonType(i);
 
-        switch(i) {
-          case 0:
-            value = "enclosureLight";
-            break;
-          case 1:
-            value = "camera";
-            break;
-          case 2:
-            value = "enclosureFan";
-            break;
-        }
-
-        if (value != "") {
+        if (strcmp(value, "unknown") != 0) {
           mqttClient.publish("prusashelf/buttonPressed", value);
           Serial.printf("Published %s to topic prusashelf/buttonPressed\n", value);
         }
@@ -113,26 +129,42 @@ void setLedState(const char *switchState) {
   const char *stateValue = delimiter + 1;
   while (*stateValue == ' ') stateValue++; // Skip spaces
 
-  if (strcmp(switchName, "printer") == 0) {
-    ledIndex = 0;
-  } else if (strcmp(switchName, "enclosureLight") == 0) {
-    ledIndex = 1;
-  } else if (strcmp(switchName, "camera") == 0) {
-    ledIndex = 2;
-  } else if (strcmp(switchName, "enclosureFan") == 0) {
-    ledIndex = 4; // 3 is yellow led to indicate running camera
-  } else {
-    Serial.printf("Invalid switch %s\n", switchName);
+  for (int i = 0; i < numLeds; i++) {
+    if (strcmp(switchName, getLedType(i)) == 0) {
+      ledIndex = i;
+      break;
+    }
   }
 
-  if (strcmp(stateValue, "on") == 0) {
-    Serial.printf("%s is turned ON\n", switchName);
-    ledStates[ledIndex] = true;
-  } else if (strcmp(stateValue, "off") == 0) {
-    Serial.printf("%s is turned OFF\n", switchName);
-    ledStates[ledIndex] = false;
+  if (isQueryingOtherDevicesStatus) {
+    // Update button states not just LED states when querying other devices status
+    for (int i = 0; i < numButtons; i++) {
+      if (strcmp(switchName, getButtonType(i)) == 0) {
+        if (strcmp(stateValue, "on") == 0) {
+          buttonStates[i] = true;
+        } else if (strcmp(stateValue, "off") == 0) {
+          buttonStates[i] = false;
+        }
+      }
+    }
+  }
+  
+  if (ledIndex >= 0) {
+    if (strcmp(stateValue, "on") == 0) {
+      Serial.printf("%s is turned ON\n", switchName);
+      ledStates[ledIndex] = true;
+      
+      if (ledIndex == 3) {
+        cameraRunningLedOnTime = millis();  // time when camera running indicator was turned on
+      }
+    } else if (strcmp(stateValue, "off") == 0) {
+      Serial.printf("%s is turned OFF\n", switchName);
+      ledStates[ledIndex] = false;
+    } else {
+      Serial.printf("Invalid state for %s: %s\n", switchName, stateValue);
+    }
   } else {
-    Serial.printf("Invalid state for %s: %s\n", switchName, stateValue);
+    Serial.printf("Invalid switch %s\n", switchName);
   }
 }
 
@@ -144,6 +176,33 @@ void updateLeds() {
       digitalWrite(ledPins[i], LOW);
     }
   }
+}
+
+void cycleLedsStartupProcedure() {
+  // Make sure all LEDs are OFF
+  Serial.println("Running startup sequnce of LEDs");
+  for (int i = 0; i < numLeds; i++) {
+    ledStates[i] = false;
+  }
+
+  updateLeds();
+
+  // Turn each LED on, one by one
+  for (int i = 0; i < numLeds; i++) {
+    Serial.printf("Testing LED %d...\n", i);
+    ledStates[i] = true;
+    updateLeds();
+    delay(100);
+  }
+
+  // Make sure all LEDs are OFF
+  delay(500);
+  Serial.println("Turning all LEDs off");
+  for (int i = 0; i < numLeds; i++) {
+    ledStates[i] = false;
+  }
+
+  updateLeds();
 }
 
 void IRAM_ATTR handleButtonInterrupt() {
@@ -175,6 +234,8 @@ void incomingMqttMessage(char *topic, uint8_t *message, unsigned int length) {
 
   if (strcmp(topic, "prusashelf/switchStateChanged") == 0) {
     setLedState(value.c_str());
+  } else if (strcmp(topic, "prusashelf/cameraRunning") == 0) {
+    setLedState("cameraRunning: on");
   }
 }
 
@@ -200,17 +261,32 @@ void subscribeToMqttTopics() {
   } else {
     Serial.println("Failed to subscribe to topic!");
   }
+
+  if (mqttClient.subscribe("prusashelf/cameraRunning")) {
+    Serial.println("Subscribed to topic: prusashelf/cameraRunning");
+  } else {
+    Serial.println("Failed to subscribe to topic");
+  }
+}
+
+void queryStatusOfOtherDevices() {
+  isQueryingOtherDevicesStatus = true;
+  Serial.println("Send message to query other devices status. The next switchStateChanged events will not be real changes, just an update on the current status.");
+  mqttClient.publish("prusashelf/queryDeviceStatus", "true");
 }
 
 void setup() {
   Serial.begin(115200);
 
   // Setup IO pins for buttons
-  pinMode(buttonPrinterPin, INPUT_PULLUP);  // This button must be held before triggering an action
-  
   for (int i = 0; i < numButtons; i++) {
     pinMode(buttonPins[i], INPUT_PULLUP);
-    attachInterrupt(buttonPins[i], handleButtonInterrupt, CHANGE);
+
+    if (buttonPins[i] == buttonPrinterPin) {
+      // This button must be held before triggering an action
+    } else {
+      attachInterrupt(buttonPins[i], handleButtonInterrupt, CHANGE);
+    }
   }
 
   // Setup IO pins for LEDs
@@ -255,6 +331,9 @@ void setup() {
    */
   //configTzTime(time_zone, ntpServer1, ntpServer2);
 
+  // Test all LEDs on startup
+  cycleLedsStartupProcedure();
+
   // Connect to MQTT broker
   mqttClient.setServer(mqttServer, 1883);
   mqttClient.setCallback(incomingMqttMessage);
@@ -262,6 +341,9 @@ void setup() {
   if (!mqttClient.connected()) {
     reconnectMqttBroker();
   }
+
+  // Query all devices for their status to update LEDs based on the actual status of other devices that has been running while this device was reset
+  queryStatusOfOtherDevices();
 }
 
 void loop() {
@@ -271,9 +353,21 @@ void loop() {
 
   mqttClient.loop(); // Process incoming MQTT messages
 
+  // If this device is updating based on other devices status, wait until it has received those messages and updated buttonStates array
+  if (isQueryingOtherDevicesStatus) {
+    delay(5000);
+    isQueryingOtherDevicesStatus= false;
+  }
+
   checkButtonsHeld();
   checkButtonStates();
   updateLeds();
+
+  // Turn off camera running indicator after about 1s
+  if (ledStates[3] && millis() - cameraRunningLedOnTime >= 1000) {
+    setLedState("cameraRunning: off");
+  }
+
   delay(100);
   //printLocalTime();  // it will take some time to sync time :)
 }
